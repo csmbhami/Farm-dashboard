@@ -1,0 +1,40 @@
+<Route
+              path="/dashboard"
+              element={
+                <PrivateRoute user={user}>
+                  <DashboardPage crops={crops} tasks={tasks} inventory={inventory} employees={employees} />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/crops"
+              element={
+                <PrivateRoute user={user}>
+                  <CropsPage crops={crops} />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/inventory"
+              element={
+                <PrivateRoute user={user}>
+                  <InventoryPage inventory={inventory} />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/tasks"
+              element={
+                <PrivateRoute user={user}>
+                  <TasksPage tasks={tasks} />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/employees"
+              element={
+                <PrivateRoute user={user}>
+                  <EmployeesPage employees={employees} />
+                </PrivateRoute>
+              }
+            />
