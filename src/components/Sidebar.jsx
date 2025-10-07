@@ -1,7 +1,9 @@
 import { NavLink } from "react-router-dom";
-import { supabase } from "../lib/supabaseClient";
+import { useLogout } from '../hooks/useLogout';
 
 export default function Sidebar({ isOpen, user }) {
+  const { logout, isLoggingOut } = useLogout();
+  
   if (!user) return null;
 
   return (
@@ -67,12 +69,15 @@ export default function Sidebar({ isOpen, user }) {
         </NavLink>
       </nav>
 
-      <button
-        onClick={async () => await supabase.auth.signOut()}
-        className="m-4 px-4 py-2 bg-purple-700 rounded hover:bg-purple-600"
-      >
-        Logout
-      </button>
+      <div className="p-4 border-t border-purple-700">
+        <button
+          onClick={logout}
+          disabled={isLoggingOut}
+          className="w-full p-2 rounded bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {isLoggingOut ? 'Signing out...' : 'Sign Out'}
+        </button>
+      </div>
     </aside>
   );
 }
