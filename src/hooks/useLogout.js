@@ -19,7 +19,6 @@ export function useLogout() {
       
       if (error) {
         console.error('[Logout] Error:', error.message);
-        throw error;
       }
       
       console.log('[Logout] Successfully signed out');
@@ -35,11 +34,11 @@ export function useLogout() {
       });
     } finally {
       setIsLoggingOut(false);
-      // Force navigation after logout (with small delay to let auth state update)
-      setTimeout(() => {
-        navigate('/login', { replace: true });
-      }, 100);
     }
+    
+    // Force hard redirect (more reliable than navigate)
+    console.log('[Logout] Redirecting to login...');
+    window.location.href = '/login';
   };
 
   return { logout, isLoggingOut };

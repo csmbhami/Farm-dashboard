@@ -20,6 +20,48 @@ import EmployeesPage from "./pages/EmployeesPage";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 
+// Helper: Read session directly from localStorage (instant, no API call)
+function getLocalSession() {
+  try {
+    const keys = Object.keys(localStorage);
+    const authKey = keys.find(key => key.startsWith('sb-') && key.includes('auth-token'));
+    if (!authKey) {
+      console.log('[Auth] No auth key found in localStorage');
+      return null;
+    }
+    
+    const data = localStorage.getItem(authKey);
+    if (!data) {
+      console.log('[Auth] Auth key exists but no data');
+      return null;
+    }
+    
+    const parsed = JSON.parse(data);
+    console.log('[Auth] Parsed session keys:', Object.keys(parsed));
+    
+    // Supabase stores session in different possible locations
+    const session = parsed?.currentSession || parsed?.session || parsed;
+    
+    if (!session?.user) {
+      console.log('[Auth] No user in session');
+      return null;
+    }
+    
+    // Check if session is expired
+    const expiresAt = session?.expires_at;
+    if (expiresAt && expiresAt < Math.floor(Date.now() / 1000)) {
+      console.log('[Auth] Local session expired');
+      return null;
+    }
+    
+    console.log('[Auth] Found valid local session for:', session.user.email);
+    return session;
+  } catch (e) {
+    console.warn('[Auth] Failed to read local session:', e);
+    return null;
+  }
+}
+
 export default function App() {
   // Run session cleanup on app start
   useEffect(() => {
@@ -44,72 +86,77 @@ export default function App() {
   const { accountId, loading: accountLoading } = useAccount();
   const location = useLocation();
 
-  // --- 1) Bootstrap auth with auto-recovery
+  // --- 1) Bootstrap auth with localStorage-first approach (instant!)
   useEffect(() => {
     let unsub = null;
     let mounted = true;
+    let authResolved = false;
 
     (async () => {
-      try {
-        // Race getSession against a timeout to detect hangs
-        const sessionPromise = supabase.auth.getSession();
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Session timeout')), 5000)
-        );
+      // INSTANT: Try reading from localStorage first
+      const localSession = getLocalSession();
+      
+      if (localSession?.user) {
+        console.log('[Auth] Using cached local session');
+        if (mounted && !authResolved) {
+          setUser(localSession.user);
+          setAuthReady(true);
+          authResolved = true;
+        }
+      } else {
+        console.log('[Auth] No valid local session');
+        if (mounted && !authResolved) {
+          setAuthReady(true);
+          setUser(null);
+          authResolved = true;
+        }
+      }
 
-        const { data, error } = await Promise.race([sessionPromise, timeoutPromise]);
+      // Background: Verify session with Supabase (non-blocking)
+      try {
+        console.log('[Auth] Verifying session in background...');
+        const { data, error } = await supabase.auth.getSession();
         
         if (error) {
-          console.warn("[Auth] getSession error:", error.message);
-          // If it's an invalid token error, clear it
+          console.warn("[Auth] Background verification error:", error.message);
           if (error.message.includes('invalid') || error.message.includes('expired')) {
             await supabase.auth.signOut();
+            if (mounted) setUser(null);
           }
-        }
-        
-        if (mounted) {
-          setUser(data?.session?.user ?? null);
-          setAuthReady(true);
+        } else if (mounted) {
+          // Update user if it changed
+          const newUser = data?.session?.user ?? null;
+          setUser(newUser);
         }
       } catch (e) {
-        console.error("[Auth] getSession failed:", e.message);
+        console.error("[Auth] Background verification failed:", e.message);
         
-        // Auto-recovery: clear corrupted session
+        // Auto-recovery
         try {
-          console.log("[Auth] Attempting auto-recovery...");
           await supabase.auth.signOut();
-          
-          // Clear any stuck storage keys
           if (typeof window !== 'undefined') {
             Object.keys(localStorage).forEach(key => {
-              if (key.startsWith('sb-') && key.includes('auth-token')) {
+              if (key.startsWith('sb-')) {
                 localStorage.removeItem(key);
               }
             });
           }
+          if (mounted) setUser(null);
         } catch (signOutErr) {
           console.warn("[Auth] Auto-recovery failed:", signOutErr);
         }
-        
-        if (mounted) {
-          setUser(null);
-          setAuthReady(true);
-        }
       }
 
-      // Set up auth listener with error handling
+      // Set up auth listener
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (!mounted) return;
-        
         console.log('[Auth] Event:', event, session?.user?.email || 'no user');
         
-        // Handle token refresh failures
         if (event === 'TOKEN_REFRESHED' && !session) {
-          console.warn('[Auth] Token refresh failed, clearing session');
+          console.warn('[Auth] Token refresh failed');
           await supabase.auth.signOut();
         }
         
-        // Handle signed out state
         if (event === 'SIGNED_OUT') {
           console.log('[Auth] User signed out');
         }
@@ -169,17 +216,22 @@ export default function App() {
   // Force routes remount on auth flips
   const routesKey = useMemo(() => (user ? "authed" : "anon"), [user]);
 
-  // Block only until the very first auth check completes
+  // Block only until auth is ready (don't wait for account)
   if (!authReady) {
     return (
       <div className="w-screen h-screen flex items-center justify-center bg-purple-50">
-        <p className="text-gray-600">Starting app…</p>
+        <div className="text-center">
+          <div className="animate-pulse mb-2">
+            <div className="w-12 h-12 bg-purple-600 rounded-full mx-auto"></div>
+          </div>
+          <p className="text-gray-600">Loading your dashboard…</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="w-screen h-screen flex bg-purple-100 overflow-hidden relative">
+    <div className="w-screen h-screen flex bg-purple-100 overflow-hidden relative animate-fadeIn">
       {user && <Sidebar isOpen={isSidebarOpen} user={user} />}
 
       <main className="flex-1 p-6 h-full relative overflow-y-auto">
@@ -195,67 +247,82 @@ export default function App() {
 
         {user && <PageHeader />}
 
-        {loadingData && user && (
+        {/* Show loading indicator while account is being resolved */}
+        {user && accountLoading && (
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <div className="animate-pulse mb-2">
+                <div className="w-10 h-10 bg-purple-600 rounded-full mx-auto"></div>
+              </div>
+              <p className="text-gray-600">Loading your data...</p>
+            </div>
+          </div>
+        )}
+
+        {loadingData && user && !accountLoading && (
           <div className="mb-4 text-sm text-gray-600">Loading data…</div>
         )}
         {error && <div className="mb-4 text-sm text-red-600">{error}</div>}
 
-        <Routes key={routesKey}>
-          {/* Public */}
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+        {/* Only render routes when account is ready */}
+        {(!user || !accountLoading) && (
+          <Routes key={routesKey}>
+            {/* Public */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
 
-          {/* Protected */}
-          <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
-          <Route
-            path="/dashboard"
-            element={
-              <PrivateRoute>
-                <DashboardPage
-                  crops={crops}
-                  tasks={tasks}
-                  inventory={inventory}
-                  employees={employees}
-                />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/crops"
-            element={
-              <PrivateRoute>
-                <CropsPage crops={crops} />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/tasks"
-            element={
-              <PrivateRoute>
-                <TasksPage tasks={tasks} />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/inventory"
-            element={
-              <PrivateRoute>
-                <InventoryPage inventory={inventory} />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/employees"
-            element={
-              <PrivateRoute>
-                <EmployeesPage employees={employees} />
-              </PrivateRoute>
-            }
-          />
+            {/* Protected */}
+            <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
+            <Route
+              path="/dashboard"
+              element={
+                <PrivateRoute>
+                  <DashboardPage
+                    crops={crops}
+                    tasks={tasks}
+                    inventory={inventory}
+                    employees={employees}
+                  />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/crops"
+              element={
+                <PrivateRoute>
+                  <CropsPage crops={crops} />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/tasks"
+              element={
+                <PrivateRoute>
+                  <TasksPage tasks={tasks} />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/inventory"
+              element={
+                <PrivateRoute>
+                  <InventoryPage inventory={inventory} />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/employees"
+              element={
+                <PrivateRoute>
+                  <EmployeesPage employees={employees} />
+                </PrivateRoute>
+              }
+            />
 
-          {/* Fallback */}
-          <Route path="*" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
-        </Routes>
+            {/* Fallback */}
+            <Route path="*" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
+          </Routes>
+        )}
       </main>
     </div>
   );
