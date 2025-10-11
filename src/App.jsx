@@ -173,15 +173,15 @@ export default function App() {
     };
   }, []);
 
-  // --- 2) Fetch tenant data AFTER user + accountId exist
+  // --- 2) Fetch tenant data AFTER user + accountId exist (with realtime updates)
   useEffect(() => {
     if (!user || !accountId) return;
     let cancelled = false;
 
-    setLoadingData(true);
-    setError(null);
+    const fetchData = async () => {
+      setLoadingData(true);
+      setError(null);
 
-    (async () => {
       try {
         const [
           { data: cropsData, error: cropsErr },
@@ -208,9 +208,63 @@ export default function App() {
       } finally {
         if (!cancelled) setLoadingData(false);
       }
-    })();
+    };
 
-    return () => { cancelled = true; };
+    // Initial fetch
+    fetchData();
+
+    // Subscribe to realtime changes for all tables
+    const inventoryChannel = supabase
+      .channel('inventory-changes')
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'inventory', filter: `account_id=eq.${accountId}` },
+        (payload) => {
+          console.log('[Realtime] Inventory changed:', payload.eventType);
+          fetchData();
+        }
+      )
+      .subscribe();
+
+    const cropsChannel = supabase
+      .channel('crops-changes')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'crops', filter: `account_id=eq.${accountId}` },
+        (payload) => {
+          console.log('[Realtime] Crops changed:', payload.eventType);
+          fetchData();
+        }
+      )
+      .subscribe();
+
+    const tasksChannel = supabase
+      .channel('tasks-changes')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'tasks', filter: `account_id=eq.${accountId}` },
+        (payload) => {
+          console.log('[Realtime] Tasks changed:', payload.eventType);
+          fetchData();
+        }
+      )
+      .subscribe();
+
+    const employeesChannel = supabase
+      .channel('employees-changes')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'employees', filter: `account_id=eq.${accountId}` },
+        (payload) => {
+          console.log('[Realtime] Employees changed:', payload.eventType);
+          fetchData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      inventoryChannel.unsubscribe();
+      cropsChannel.unsubscribe();
+      tasksChannel.unsubscribe();
+      employeesChannel.unsubscribe();
+    };
   }, [user, accountId]);
 
   // Force routes remount on auth flips
@@ -246,7 +300,7 @@ export default function App() {
         )}
 
         {user && <PageHeader />}
-
+        
         {/* Show loading indicator while account is being resolved */}
         {user && accountLoading && (
           <div className="flex items-center justify-center py-12">
@@ -258,10 +312,9 @@ export default function App() {
             </div>
           </div>
         )}
-
-        {loadingData && user && !accountLoading && (
-          <div className="mb-4 text-sm text-gray-600">Loading data…</div>
-        )}
+        
+        
+        
         {error && <div className="mb-4 text-sm text-red-600">{error}</div>}
 
         {/* Only render routes when account is ready */}

@@ -17,6 +17,7 @@ export default function DashboardPage({ crops, tasks, inventory, employees }) {
                 className={`h-4 rounded-full ${
                   c.status === "Healthy"
                     ? "bg-green-500"
+                    
                     : c.status === "Needs Water"
                     ? "bg-yellow-500"
                     : "bg-red-500"
