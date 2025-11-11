@@ -351,7 +351,7 @@ export default function App() {
               path="/tasks"
               element={
                 <PrivateRoute>
-                  <TasksPage tasks={tasks} />
+                  <TasksPage tasks={tasks} employees={employees} />
                 </PrivateRoute>
               }
             />

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useAccount } from "../context/AccountContext";
 import { Plus, Trash2, Minus, Plus as PlusIcon } from "lucide-react";
@@ -9,11 +9,21 @@ export default function InventoryPage({ inventory }) {
   const [isAdding, setIsAdding] = useState(false);
   const [deleting, setDeleting] = useState({});
   const [updating, setUpdating] = useState({});
+  const [localQuantities, setLocalQuantities] = useState({});
   const [newItem, setNewItem] = useState({
     item: "",
     qty: 0,
     unit: "kg",
   });
+
+  // Sync local quantities with props
+  useEffect(() => {
+    const quantities = {};
+    inventory.forEach((item) => {
+      quantities[item.id] = item.qty;
+    });
+    setLocalQuantities(quantities);
+  }, [inventory]);
 
   const units = ["kg", "g", "litres", "ml", "units"];
 
@@ -70,6 +80,8 @@ export default function InventoryPage({ inventory }) {
   const handleAdjustQuantity = async (id, currentQty, adjustment) => {
     const newQty = Math.max(0, currentQty + adjustment);
 
+    // Optimistic update
+    setLocalQuantities((prev) => ({ ...prev, [id]: newQty }));
     setUpdating((prev) => ({ ...prev, [id]: true }));
 
     const { error } = await supabase
@@ -81,6 +93,8 @@ export default function InventoryPage({ inventory }) {
 
     if (error) {
       console.error("Error updating quantity:", error);
+      // Revert on error
+      setLocalQuantities((prev) => ({ ...prev, [id]: currentQty }));
       alert("Failed to update quantity. Please try again.");
     }
   };
@@ -88,6 +102,8 @@ export default function InventoryPage({ inventory }) {
   const handleDirectQuantityChange = async (id, newQty) => {
     if (newQty < 0) return;
 
+    // Optimistic update
+    setLocalQuantities((prev) => ({ ...prev, [id]: newQty }));
     setUpdating((prev) => ({ ...prev, [id]: true }));
 
     const { error } = await supabase
@@ -99,6 +115,9 @@ export default function InventoryPage({ inventory }) {
 
     if (error) {
       console.error("Error updating quantity:", error);
+      // Revert on error
+      const originalItem = inventory.find((item) => item.id === id);
+      setLocalQuantities((prev) => ({ ...prev, [id]: originalItem?.qty || 0 }));
       alert("Failed to update quantity. Please try again.");
     }
   };
@@ -125,7 +144,8 @@ export default function InventoryPage({ inventory }) {
       ) : (
         <div className="space-y-2">
           {inventory.map((i) => {
-            const isLow = i.qty < 30;
+            const currentQty = localQuantities[i.id] ?? i.qty;
+            const isLow = currentQty < 30;
             return (
               <div
                 key={i.id}
@@ -146,7 +166,7 @@ export default function InventoryPage({ inventory }) {
                   {/* Quantity adjustment buttons */}
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => handleAdjustQuantity(i.id, i.qty, -10)}
+                      onClick={() => handleAdjustQuantity(i.id, currentQty, -10)}
                       disabled={updating[i.id] || deleting[i.id]}
                       className="p-1 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       title="Decrease by 10"
@@ -156,7 +176,7 @@ export default function InventoryPage({ inventory }) {
                     
                     <input
                       type="number"
-                      value={i.qty}
+                      value={currentQty}
                       onChange={(e) => handleDirectQuantityChange(i.id, parseFloat(e.target.value) || 0)}
                       disabled={updating[i.id] || deleting[i.id]}
                       className={`w-20 text-center text-sm font-semibold border rounded px-2 py-1 ${
@@ -167,7 +187,7 @@ export default function InventoryPage({ inventory }) {
                     <span className="text-sm text-gray-600 min-w-[40px]">{i.unit}</span>
                     
                     <button
-                      onClick={() => handleAdjustQuantity(i.id, i.qty, 10)}
+                      onClick={() => handleAdjustQuantity(i.id, currentQty, 10)}
                       disabled={updating[i.id] || deleting[i.id]}
                       className="p-1 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       title="Increase by 10"
