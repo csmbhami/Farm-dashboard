@@ -237,15 +237,21 @@ export default function App() {
       .subscribe();
 
     const tasksChannel = supabase
-      .channel('tasks-changes')
+      .channel('tasks-changes', {
+        config: {
+          broadcast: { self: true }
+        }
+      })
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'tasks', filter: `account_id=eq.${accountId}` },
         (payload) => {
           console.log('[Realtime] Tasks changed:', payload.eventType);
-          fetchData();
+          fetchData(); // This should trigger a refresh
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('[Realtime] Tasks subscription status:', status);
+      });
 
     const employeesChannel = supabase
       .channel('employees-changes')

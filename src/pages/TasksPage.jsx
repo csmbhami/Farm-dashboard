@@ -10,6 +10,7 @@ export default function TasksPage({ tasks, employees }) {
   const [deleting, setDeleting] = useState({});
   const [updating, setUpdating] = useState({});
   const [localCompletedStatus, setLocalCompletedStatus] = useState({});
+  const [hiddenTasks, setHiddenTasks] = useState(new Set());
   const [newTask, setNewTask] = useState({
     task: "",
     due_date: "",
@@ -26,6 +27,9 @@ export default function TasksPage({ tasks, employees }) {
     });
     setLocalCompletedStatus(statuses);
   }, [tasks]);
+
+  // Filter out hidden (deleted) tasks
+  const visibleTasks = tasks.filter(task => !hiddenTasks.has(task.id));
 
   const handleAddTask = async (e) => {
     e.preventDefault();
@@ -63,14 +67,29 @@ export default function TasksPage({ tasks, employees }) {
   const handleDeleteTask = async (id) => {
     if (!confirm("Are you sure you want to delete this task?")) return;
 
+    // Optimistic delete - hide immediately
+    setHiddenTasks((prev) => new Set([...prev, id]));
     setDeleting((prev) => ({ ...prev, [id]: true }));
 
-    const { error } = await supabase.from("tasks").delete().eq("id", id);
+    console.log('[Delete] Attempting to delete task:', id);
+    const { data, error } = await supabase.from("tasks").delete().eq("id", id);
+
+    console.log('[Delete] Result:', { data, error });
 
     if (error) {
       console.error("Error deleting task:", error);
+      // Revert on error - show the task again
+      setHiddenTasks((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(id);
+        return newSet;
+      });
       setDeleting((prev) => ({ ...prev, [id]: false }));
-      alert("Failed to delete task. Please try again.");
+      alert(`Failed to delete task: ${error.message}`);
+    } else {
+      console.log('[Delete] Success!');
+      // Success - remove from deleting state
+      setDeleting((prev) => ({ ...prev, [id]: false }));
     }
   };
 
@@ -81,10 +100,13 @@ export default function TasksPage({ tasks, employees }) {
     setLocalCompletedStatus((prev) => ({ ...prev, [id]: newStatus }));
     setUpdating((prev) => ({ ...prev, [id]: true }));
 
-    const { error } = await supabase
+    console.log('[Toggle] Attempting to update task:', id, 'to', newStatus);
+    const { data, error } = await supabase
       .from("tasks")
       .update({ completed: newStatus })
       .eq("id", id);
+
+    console.log('[Toggle] Result:', { data, error });
 
     setUpdating((prev) => ({ ...prev, [id]: false }));
 
@@ -92,7 +114,9 @@ export default function TasksPage({ tasks, employees }) {
       console.error("Error updating task:", error);
       // Revert on error
       setLocalCompletedStatus((prev) => ({ ...prev, [id]: currentStatus }));
-      alert("Failed to update task. Please try again.");
+      alert(`Failed to update task: ${error.message}`);
+    } else {
+      console.log('[Toggle] Success!');
     }
   };
 
@@ -131,9 +155,15 @@ export default function TasksPage({ tasks, employees }) {
           <p className="text-lg mb-2">No tasks yet</p>
           <p className="text-sm">Add your first task to get started!</p>
         </div>
+      ) : visibleTasks.length === 0 ? (
+        <div className="text-center py-12 text-gray-500">
+          <div className="text-6xl mb-4">✅</div>
+          <p className="text-lg mb-2">All tasks completed!</p>
+          <p className="text-sm">Great job!</p>
+        </div>
       ) : (
         <div className="space-y-3">
-          {tasks.map((task) => {
+          {visibleTasks.map((task) => {
             const isCompleted = localCompletedStatus[task.id] || false;
             const overdue = isOverdue(task.due_date);
             const today = isToday(task.due_date);
